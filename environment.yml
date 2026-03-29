@@ -1,0 +1,48 @@
+name: flaming-gorge
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  # Core Python
+  - python=3.10
+
+  # Data handling
+  - numpy
+  - pandas
+  - scipy
+
+  # Geospatial
+  - geopandas
+  - shapely
+  - pyproj
+  - rasterio
+  - rioxarray
+  - pynhd
+  - contextily
+  - mercantile
+
+  # Hydrology data retrieval
+  - dataretrieval
+  - earthaccess
+  - earthengine-api
+
+  # Plotting
+  - matplotlib-base
+  - pillow
+
+  # Jupyter
+  - ipykernel
+  - ipywidgets
+  - widgetsnbextension
+
+  # Utilities
+  - requests
+  - tqdm
+  - certifi
+  - openssl
+  - ca-certificates
+
+  # pip-only packages
+  - pip
+  - pip:
+    - adjusttext
