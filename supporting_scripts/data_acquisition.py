@@ -1,14 +1,15 @@
 """
 data_acquisition.py
 
-Fetches and caches all data needed for the Flaming Gorge reservoir
-water supply forecast:
-  - Basin boundary (NLDI)
-  - SNOTEL stations within basin (egagli/snotel_ccss_stations)
-  - USGS streamflow: inlet (09217000) and outlet (09234500)
+Functions to fetch and cache hydrologic data for reservoir water supply
+forecasting. Retrieves basin boundaries, SNOTEL snow water equivalent,
+and USGS streamflow records. All configuration is passed in as function
+arguments.
 
-All data is saved to the data/ directory. Functions are
-cache-aware: if a file already exists it is loaded, not re-fetched.
+Data sources:
+    - Basin boundary: USGS NHD via NLDI (pynhd)
+    - SNOTEL SWE:     egagli/snotel_ccss_stations (GitHub CSV)
+    - Streamflow:     USGS NWIS daily values (dataretrieval)
 
 Author: Magnus Tveit
 """
@@ -19,84 +20,95 @@ import pandas as pd
 import geopandas as gpd
 from pynhd import NLDI
 from dataretrieval import nwis
+import sys
+sys.path.append(os.path.dirname(__file__))
 warnings.filterwarnings("ignore")
-
-# Config
-INLET_ID    = "09217000"   # Green River near Green River, WY
-OUTLET_ID   = "09234500"   # Green River near Greendale, UT (dam outlet)
-ANALYSIS_DATE = "2025-04-01"
-START_DATE  = "1980-01-01"  # full historical record
-END_DATE    = "2025-04-01"  # analysis cutoff
 
 SNOTEL_BASE_URL = "https://raw.githubusercontent.com/egagli/snotel_ccss_stations/main/data/{}.csv"
 SNOTEL_META_URL = "https://raw.githubusercontent.com/egagli/snotel_ccss_stations/main/all_stations.geojson"
 
-DATA_DIR        = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
-SNOTEL_DIR      = os.path.join(DATA_DIR, "SNOTEL")
-NWIS_DIR        = os.path.join(DATA_DIR, "NWIS")
-BASIN_DIR       = os.path.join(DATA_DIR, "basin")
 
-# Helpers
-
-def _make_dirs():
-    """Create all required output directories."""
-    for d in [SNOTEL_DIR, NWIS_DIR, BASIN_DIR]:
-        os.makedirs(d, exist_ok=True)
-
-
-# Basin boundary
-
-def get_basin(station_id=INLET_ID):
+def get_basin(inlet_id, data_dir):
     """
     Fetch the NHD watershed boundary for the inlet gauge.
-    Returns a GeoDataFrame and the shapely geometry.
-    Cached to data/basin/basin_{station_id}.geojson.
+
+    Parameters
+    ----------
+    inlet_id : str
+        USGS station ID for the reservoir inlet gauge.
+    data_dir : str
+        Root data directory path.
+
+    Returns
+    -------
+    basin_gdf : GeoDataFrame
+    basin_geom : shapely Polygon
     """
-    path = os.path.join(BASIN_DIR, f"basin_{station_id}.geojson")
+    basin_dir = os.path.join(data_dir, "basin")
+    os.makedirs(basin_dir, exist_ok=True)
+    path = os.path.join(basin_dir, f"basin_{inlet_id}.geojson")
 
     if os.path.exists(path):
         print(f"Loading cached basin boundary: {path}")
         basin_gdf = gpd.read_file(path)
     else:
-        print(f"Fetching basin boundary for {station_id} from NLDI...")
-        basin_gdf = NLDI().get_basins(station_id)
+        print(f"Fetching basin boundary for {inlet_id} from NLDI...")
+        basin_gdf = NLDI().get_basins(inlet_id)
         basin_gdf.to_file(path, driver="GeoJSON")
         print(f"Saved: {path}")
 
-    basin_geom = basin_gdf.geometry.iloc[0]
-    return basin_gdf, basin_geom
+    return basin_gdf, basin_gdf.geometry.iloc[0]
 
-
-# SNOTEL
 
 def get_snotel_stations(basin_geom):
     """
-    Load all SNOTEL stations from egagli/snotel_ccss_stations,
-    filter to those within the basin boundary.
-    Returns a GeoDataFrame of stations.
+    Filter all SNOTEL stations to those within the basin boundary.
+
+    Parameters
+    ----------
+    basin_geom : shapely Polygon
+        Watershed boundary geometry.
+
+    Returns
+    -------
+    GeoDataFrame of stations within the basin.
     """
     print("Loading SNOTEL station metadata...")
     stations = gpd.read_file(SNOTEL_META_URL).set_index("code")
-    # keep only stations with actual CSV data
     stations = stations[stations["csvData"] == True]
-    stations_in_basin = stations[stations.geometry.within(basin_geom)].copy()
-    print(f"Found {len(stations_in_basin)} SNOTEL stations in basin:")
-    for code, row in stations_in_basin.iterrows():
+    in_basin = stations[stations.geometry.within(basin_geom)].copy()
+    print(f"Found {len(in_basin)} SNOTEL stations in basin:")
+    for code, row in in_basin.iterrows():
         print(f"  {code}: {row['name']} ({row['elevation_m']:.0f} m)")
-    return stations_in_basin
+    return in_basin
 
 
-def get_snotel_data(stations_gdf):
+def get_snotel_data(stations_gdf, data_dir, start_date, end_date):
     """
     Fetch SWE data for each station in stations_gdf.
-    Returns a dict: {station_code: DataFrame} with datetime index
-    and column WTEQ_m (SWE in meters).
-    Cached to data/SNOTEL/{code}.csv.
+
+    Parameters
+    ----------
+    stations_gdf : GeoDataFrame
+        Station metadata, indexed by station code.
+    data_dir : str
+        Root data directory path.
+    start_date : str
+        Start date string 'YYYY-MM-DD'.
+    end_date : str
+        End date string 'YYYY-MM-DD'.
+
+    Returns
+    -------
+    dict : {station_code: DataFrame}
+        Each DataFrame has DatetimeIndex and column WTEQ_m (SWE in meters).
     """
+    snotel_dir = os.path.join(data_dir, "SNOTEL")
+    os.makedirs(snotel_dir, exist_ok=True)
     snotel_data = {}
 
     for code in stations_gdf.index:
-        path = os.path.join(SNOTEL_DIR, f"{code}.csv")
+        path = os.path.join(snotel_dir, f"{code}.csv")
 
         if os.path.exists(path):
             print(f"Loading cached SNOTEL: {code}")
@@ -112,12 +124,10 @@ def get_snotel_data(stations_gdf):
                 print(f"  WARNING: Could not fetch {code}: {e}")
                 continue
 
-        # Clip to analysis period and keep only SWE
-        df = df[(df.index >= START_DATE) & (df.index <= END_DATE)][["WTEQ"]].copy()
-        # WTEQ is in meters per the egagli repo docs
+        # Clip to analysis period and rename SWE column
+        df = df[(df.index >= start_date) & (df.index <= end_date)][["WTEQ"]].copy()
         df.rename(columns={"WTEQ": "WTEQ_m"}, inplace=True)
         df["WTEQ_m"] = pd.to_numeric(df["WTEQ_m"], errors="coerce")
-
         snotel_data[code] = df
         print(f"  {code}: {len(df)} records, "
               f"{df.index.min().date()} to {df.index.max().date()}")
@@ -125,16 +135,30 @@ def get_snotel_data(stations_gdf):
     return snotel_data
 
 
-# USGS Streamflow
+def get_streamflow(station_id, label, data_dir, start_date, end_date):
+    """
+    Fetch daily mean streamflow from USGS NWIS.
 
-def get_streamflow(station_id, label="inlet"):
+    Parameters
+    ----------
+    station_id : str
+        USGS station ID.
+    label : str
+        Human-readable label e.g. 'inlet' or 'outlet'.
+    data_dir : str
+        Root data directory path.
+    start_date : str
+        Start date string 'YYYY-MM-DD'.
+    end_date : str
+        End date string 'YYYY-MM-DD'.
+
+    Returns
+    -------
+    DataFrame with columns [flow_cms, site_no], DatetimeIndex.
     """
-    Fetch daily mean streamflow from USGS NWIS for a given station.
-    Converts from cfs to cms.
-    Returns a DataFrame with columns [flow_cms, site_no].
-    Cached to data/NWIS/streamflow_{station_id}.csv.
-    """
-    path = os.path.join(NWIS_DIR, f"streamflow_{station_id}.csv")
+    nwis_dir = os.path.join(data_dir, "NWIS")
+    os.makedirs(nwis_dir, exist_ok=True)
+    path = os.path.join(nwis_dir, f"streamflow_{station_id}.csv")
 
     if os.path.exists(path):
         print(f"Loading cached streamflow ({label}): {path}")
@@ -143,22 +167,20 @@ def get_streamflow(station_id, label="inlet"):
         print(f"Fetching streamflow ({label}) for {station_id} from NWIS...")
         raw, _ = nwis.get_dv(
             sites=station_id,
-            start=START_DATE,
-            end=END_DATE,
-            parameterCd="00060"   # discharge in cfs
+            start=start_date,
+            end=end_date,
+            parameterCd="00060"
         )
-        # Strip timezone info
         raw.index = pd.to_datetime(raw.index).tz_localize(None)
         raw.index.name = "Date"
 
-        # Rename flow column — NWIS returns '00060_Mean'
         if "00060_Mean" in raw.columns:
             raw.rename(columns={"00060_Mean": "flow_cfs"}, inplace=True)
         elif "00060_00003" in raw.columns:
             raw.rename(columns={"00060_00003": "flow_cfs"}, inplace=True)
 
         raw["flow_cms"] = raw["flow_cfs"] * 0.0283168
-        raw["site_no"] = station_id
+        raw["site_no"]  = station_id
         df = raw[["flow_cms", "site_no"]].copy()
         df.to_csv(path)
         print(f"Saved: {path}")
@@ -168,29 +190,42 @@ def get_streamflow(station_id, label="inlet"):
     return df
 
 
-# Main
-
-def acquire_all():
+def acquire_all(inlet_id, outlet_id, data_dir, start_date, end_date):
     """
     Run the full data acquisition pipeline.
-    Returns all fetched data as a dict for use by analysis.py.
-    """
-    _make_dirs()
 
+    Parameters
+    ----------
+    inlet_id : str
+        USGS station ID for reservoir inlet.
+    outlet_id : str
+        USGS station ID for reservoir outlet.
+    data_dir : str
+        Root data directory path.
+    start_date : str
+        Historical record start date 'YYYY-MM-DD'.
+    end_date : str
+        Analysis cutoff date 'YYYY-MM-DD'.
+
+    Returns
+    -------
+    dict with keys: basin_gdf, basin_geom, stations_gdf,
+                    snotel_data, inlet_df, outlet_df
+    """
     print("\n=== Basin Boundary ===")
-    basin_gdf, basin_geom = get_basin()
+    basin_gdf, basin_geom = get_basin(inlet_id, data_dir)
 
     print("\n=== SNOTEL Stations ===")
     stations_gdf = get_snotel_stations(basin_geom)
 
     print("\n=== SNOTEL Data ===")
-    snotel_data = get_snotel_data(stations_gdf)
+    snotel_data = get_snotel_data(stations_gdf, data_dir, start_date, end_date)
 
     print("\n=== Streamflow: Inlet ===")
-    inlet_df = get_streamflow(INLET_ID, label="inlet")
+    inlet_df = get_streamflow(inlet_id, "inlet", data_dir, start_date, end_date)
 
     print("\n=== Streamflow: Outlet ===")
-    outlet_df = get_streamflow(OUTLET_ID, label="outlet")
+    outlet_df = get_streamflow(outlet_id, "outlet", data_dir, start_date, end_date)
 
     print("\n=== Data acquisition complete ===")
     return {
@@ -201,7 +236,3 @@ def acquire_all():
         "inlet_df":     inlet_df,
         "outlet_df":    outlet_df,
     }
-
-
-if __name__ == "__main__":
-    acquire_all()
