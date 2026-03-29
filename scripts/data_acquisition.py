@@ -21,7 +21,7 @@ from pynhd import NLDI
 from dataretrieval import nwis
 warnings.filterwarnings("ignore")
 
-# ── Config ────────────────────────────────────────────────────────────────────
+# Config
 INLET_ID    = "09217000"   # Green River near Green River, WY
 OUTLET_ID   = "09234500"   # Green River near Greendale, UT (dam outlet)
 ANALYSIS_DATE = "2025-04-01"
@@ -36,7 +36,7 @@ SNOTEL_DIR      = os.path.join(DATA_DIR, "SNOTEL")
 NWIS_DIR        = os.path.join(DATA_DIR, "NWIS")
 BASIN_DIR       = os.path.join(DATA_DIR, "basin")
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# Helpers
 
 def _make_dirs():
     """Create all required output directories."""
@@ -44,7 +44,7 @@ def _make_dirs():
         os.makedirs(d, exist_ok=True)
 
 
-# ── Basin boundary ─────────────────────────────────────────────────────────────
+# Basin boundary
 
 def get_basin(station_id=INLET_ID):
     """
@@ -67,7 +67,7 @@ def get_basin(station_id=INLET_ID):
     return basin_gdf, basin_geom
 
 
-# ── SNOTEL ─────────────────────────────────────────────────────────────────────
+# SNOTEL
 
 def get_snotel_stations(basin_geom):
     """
@@ -125,7 +125,7 @@ def get_snotel_data(stations_gdf):
     return snotel_data
 
 
-# ── USGS Streamflow ────────────────────────────────────────────────────────────
+# USGS Streamflow
 
 def get_streamflow(station_id, label="inlet"):
     """
@@ -168,7 +168,7 @@ def get_streamflow(station_id, label="inlet"):
     return df
 
 
-# ── Main ───────────────────────────────────────────────────────────────────────
+# Main
 
 def acquire_all():
     """
